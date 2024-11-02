@@ -1,0 +1,7 @@
+# Ignore Visual Studio Code folders
+.vscode/
+
+# Ignore Python cache folders
+__pycache__/
+
+src/__pycache__/
