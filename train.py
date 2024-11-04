@@ -3,10 +3,12 @@ import pickle
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 
 from src.crafter_wrapper import Env
 from src.agents.random_agent import RandomAgent
-
+from src.agents.reinforce_agent import ReinforceAgent, Policy
+from src.agents.actor_critic_agent import A2C_Agent, ActorCriticPolicy
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -60,10 +62,22 @@ def main(opt):
     opt.device = torch.device("cpu")
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    agent = RandomAgent(env.action_space.n)
+
+    if opt.agent_type == "random":
+        agent = RandomAgent(env.action_space.n)
+    elif opt.agent_type == "reinforce":
+        policy = Policy(84 * 84 * opt.history_length, env.action_space.n)
+        agent = ReinforceAgent(policy, 0.99, torch.optim.Adam(policy.parameters(), lr=1e-2))
+    elif opt.agent_type == "a2c":
+        policy = ActorCriticPolicy(84 * 84 * opt.history_length, env.action_space.n)
+        agent = A2C_Agent(policy, 0.99, torch.optim.Adam(policy.parameters(), lr=5e-3, eps=1e-05), nsteps=20)
+    else:
+        raise ValueError(f"Unknown agent type: {opt.agent_type}")
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
+    pbar = tqdm(total=opt.steps, desc="Training")
+
     while step_cnt < opt.steps or not done:
         if done:
             ep_cnt += 1
@@ -73,11 +87,14 @@ def main(opt):
         obs, reward, done, info = env.step(action)
 
         step_cnt += 1
+        pbar.update(1)
+        pbar.set_postfix({"episode": ep_cnt, "reward": reward})
 
         # evaluate once in a while
         if step_cnt % opt.eval_interval == 0:
             eval(agent, eval_env, step_cnt, opt)
-
+    
+    pbar.close()
 
 def get_options():
     """ Configures a parser. Extend this with all the best performing hyperparameters of
@@ -87,6 +104,7 @@ def get_options():
         the evaluation interval.
     """
     parser = argparse.ArgumentParser()
+    parser.add_argument("--agent_type", type=str, default="reinforce", choices=["random", "reinforce","a2c"], help="Type of agent to use.")
     parser.add_argument("--logdir", default="logdir/random_agent/0")
     parser.add_argument(
         "--steps",
