@@ -14,16 +14,26 @@ class Env:
             "eval",
         ), "`mode` argument can either be `train` or `eval`"
         self.device = args.device
+
         env = crafter.Env()
         if mode == "train":
             env = crafter.Recorder(
                 env,
-                pathlib.Path(args.logdir),
+                pathlib.Path(args.logdir) / "train",
                 save_stats=True,
                 save_video=False,
                 save_episode=False,
             )
-        env = ResizeImage(env)
+        elif mode == "eval":
+            env = crafter.Recorder(
+                env,
+                pathlib.Path(args.logdir) / "eval",
+                save_stats=True,
+                save_video=False,
+                save_episode=False,
+            )
+
+        # env = ResizeImage(env)
         env = GrayScale(env)
         self.env = env
         self.action_space = env.action_space
@@ -32,17 +42,18 @@ class Env:
 
     def reset(self):
         for _ in range(self.window):
-            self.state_buffer.append(torch.zeros(84, 84, device=self.device))
+            # self.state_buffer.append(torch.zeros(84, 84, device=self.device))
+            self.state_buffer.append(torch.zeros(64, 64, device=self.device))
         obs = self.env.reset()
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)
-        return torch.stack(list(self.state_buffer), 0)
+        return torch.stack(list(self.state_buffer), 0).unsqueeze(0)
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)
-        return torch.stack(list(self.state_buffer), 0), reward, done, info
+        return torch.stack(list(self.state_buffer), 0).unsqueeze(0), reward, done, info
 
 
 class GrayScale:
