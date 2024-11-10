@@ -14,6 +14,7 @@ from src.utils import ReplayMemory, get_epsilon_schedule
 from src.networks.net import ConvModel
 
 from src.agents.dqn import DQNAgent
+from src.agents.double_dqn import DoubleDQNAgent
 
 class RandomAgent:
     """An example Random Agent"""
@@ -88,28 +89,12 @@ def main(opt):
     
     # agent = RandomAgent(env.action_space.n)
 
-    if ("duel" in opt.agent):
-        print("Network: duel")
-        net = DuelNet(opt.history_length, env.action_space.n).to(opt.device)
-    else:
-        print("Network: conv")
-        net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
+    print("Network: conv")
+    net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
 
     buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
 
-    if ("munchausen" in opt.agent):
-        print("Agent: MunchausenDoubleDQN")
-        agent = MunchausenDoubleDQNAgent(
-                env,
-                net,
-                buffer,
-                torch.optim.Adam(net.parameters(), lr=3e-4, eps=1e-5),
-                get_epsilon_schedule(start=1.0, end=0.1, steps=opt.steps * 0.5),
-                warmup_steps=opt.steps * 0.025,
-                update_steps=4,
-                update_target_steps=2_000,
-            )
-    elif ("double_dqn" in opt.agent):
+    if ("double_dqn" in opt.agent):
         print("Agent: DoubleDQN")
         agent = DoubleDQNAgent(
                 env,
