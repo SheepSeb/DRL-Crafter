@@ -12,6 +12,7 @@ from src.crafter_wrapper import Env
 from src.utils import ReplayMemory, get_epsilon_schedule
 
 from src.networks.net import ConvModel
+from src.networks.duel_net import DuelNet
 
 from src.agents.dqn import DQNAgent
 from src.agents.double_dqn import DoubleDQNAgent
@@ -89,8 +90,12 @@ def main(opt):
     
     # agent = RandomAgent(env.action_space.n)
 
-    print("Network: conv")
-    net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
+    if ("duel" in opt.agent):
+        print("Network: duel")
+        net = DuelNet(opt.history_length, env.action_space.n).to(opt.device)
+    else:
+        print("Network: conv")
+        net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
 
     buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
 
