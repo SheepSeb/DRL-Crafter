@@ -16,6 +16,7 @@ from src.networks.duel_net import DuelNet
 
 from src.agents.dqn import DQNAgent
 from src.agents.double_dqn import DoubleDQNAgent
+from src.agents.munchausen_dqn import MunchausenDoubleDQNAgent
 
 class RandomAgent:
     """An example Random Agent"""
@@ -99,7 +100,19 @@ def main(opt):
 
     buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
 
-    if ("double_dqn" in opt.agent):
+    if ("munchausen" in opt.agent):
+        print("Agent: MunchausenDoubleDQN")
+        agent = MunchausenDoubleDQNAgent(
+                env,
+                net,
+                buffer,
+                torch.optim.Adam(net.parameters(), lr=4e-4, eps=1e-5),
+                get_epsilon_schedule(start=0.4, end=0.01, steps=opt.steps * 0.5),
+                warmup_steps=opt.steps * 0.025,
+                update_steps=4,
+                update_target_steps=2_000,
+            )
+    elif ("double_dqn" in opt.agent):
         print("Agent: DoubleDQN")
         agent = DoubleDQNAgent(
                 env,
