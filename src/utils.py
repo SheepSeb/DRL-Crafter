@@ -2,6 +2,8 @@ import torch
 
 from collections import deque
 
+from src.human import retrieve_human_buffer
+
 import random
 
 import itertools
@@ -46,6 +48,39 @@ class ReplayMemory:
         s, a, r, s_, d = zip(*random.sample(self._buffer, self._batch_size))
 
         # reshape, convert if needed, put on device
+        return (
+            torch.cat(s, 0).to(self._device),
+            torch.tensor(a, dtype=torch.int64).unsqueeze(1).to(self._device),
+            torch.tensor(r, dtype=torch.float32).unsqueeze(1).to(self._device),
+            torch.cat(s_, 0).to(self._device),
+            torch.tensor(d, dtype=torch.uint8).unsqueeze(1).to(self._device),
+        )
+
+    def __len__(self) -> int:
+        return len(self._buffer)
+
+class HumanReplayMemory:
+    def __init__(self, opt, size=1000, batch_size=32, human_records="_human"):
+        self._buffer: deque = deque(maxlen=size)
+        self._batch_size = batch_size
+        self._device = opt.device
+
+        self._human_buffer = retrieve_human_buffer(human_records, opt)
+
+        self._epsilon = get_epsilon_schedule(
+            start=0.9, end=0.1, steps=opt.steps * 0.5
+        )
+
+    def push(self, transition):
+        s, a, r, s_, d = transition
+        self._buffer.append((s.cpu(), a, r, s_.cpu(), d))
+
+    def sample(self):
+        if next(self._epsilon) < torch.rand(1).item():
+            s, a, r, s_, d = zip(*random.sample(self._buffer, self._batch_size))
+        else:
+            s, a, r, s_, d = zip(*random.sample(self._human_buffer, self._batch_size))
+
         return (
             torch.cat(s, 0).to(self._device),
             torch.tensor(a, dtype=torch.int64).unsqueeze(1).to(self._device),

@@ -10,6 +10,7 @@ from tqdm import tqdm
 from src.crafter_wrapper import Env
 
 from src.utils import ReplayMemory, get_epsilon_schedule
+from src.utils import HumanReplayMemory
 
 from src.networks.net import ConvModel
 from src.networks.duel_net import DuelNet
@@ -98,7 +99,10 @@ def main(opt):
         print("Network: conv")
         net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
 
-    buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
+    if ("human" in opt.agent):
+        buffer = HumanReplayMemory(opt=opt, size=5_000, batch_size=32)
+    else:
+        buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
 
     if ("munchausen" in opt.agent):
         print("Agent: MunchausenDoubleDQN")
