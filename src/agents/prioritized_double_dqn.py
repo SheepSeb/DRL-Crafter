@@ -1,8 +1,8 @@
 import torch
 
-from src.agents.dqn import DQNAgent
+from src.agents.prioritized_dqn import PrioritizedDQNAgent
 
-class DoubleDQNAgent(DQNAgent):
+class PrioritizedDoubleDQNAgent(PrioritizedDQNAgent):
     def _update(
         self,
         states,
@@ -10,6 +10,7 @@ class DoubleDQNAgent(DQNAgent):
         rewards,
         states_,
         done,
+        weights
     ):
         # compute the DeepQNetwork update. Carefull not to include the
         # target network in the computational graph.
@@ -27,9 +28,14 @@ class DoubleDQNAgent(DQNAgent):
         # compute target Q(s', a')
         target_qsa = rewards + self._gamma * qsa_ * (1 - done.float())
 
-        # compute the loss and average it over the entire batch
-        loss = (qsa - target_qsa).pow(2).mean()
+        # compute TD errors for updating priorities
+        td_errors = qsa - target_qsa
+
+        # compute the weighted loss using importance sampling weights
+        loss = (weights * td_errors.pow(2)).mean()
 
         self._optimizer.zero_grad()
         loss.backward()
         self._optimizer.step()
+
+        return td_errors  # return TD errors for updating priorities

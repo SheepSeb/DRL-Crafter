@@ -8,42 +8,22 @@ import random
 
 import itertools
 
-class ReplayMemory:
-    """Cyclic buffer that stores the transitions of the game on CPU RAM."""
+import numpy as np
+from collections import namedtuple
 
+class ReplayMemory:
     def __init__(self, device, size=1000, batch_size=32):
         self._buffer: deque = deque(maxlen=size)
         self._batch_size = batch_size
         self._device = device
 
     def push(self, transition):
-        """Store the transition in the buffer
-
-        The first element of the transition is the current state with the shape
-        (1, ...), the second element will be the action that the agent took,
-        the third will be the reward, the fourth will be the next state with
-        the shame shape as the current state, and the last will be a boolen
-        that will tell if the game is done.
-
-        The function will move the tensors to cpu.
-        """
         s, a, r, s_, d = transition
+
+        # move to cpu
         self._buffer.append((s.cpu(), a, r, s_.cpu(), d))
 
     def sample(self):
-        """Sample from self._buffer
-
-        Should return a tuple of tensors of size:
-        (
-            states:     N , ...,
-            actions:    N * 1, (torch.int64)
-            rewards:    N * 1, (torch.float32)
-            states_:    N * ...,
-            done:       N * 1, (torch.uint8)
-        )
-
-        where N is the batch_size.
-        """
         # sample
         s, a, r, s_, d = zip(*random.sample(self._buffer, self._batch_size))
 
@@ -58,6 +38,79 @@ class ReplayMemory:
 
     def __len__(self) -> int:
         return len(self._buffer)
+
+## ---------------------------------------------------------
+
+
+Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
+class PrioritizedReplayMemory:
+    def __init__(self, device, size=1000, batch_size=32, alpha=0.6, beta=0.4, beta_increment=0.001, epsilon=1e-6):
+        self._device = device
+        self._size = size
+        self._batch_size = batch_size
+        self._alpha = alpha
+        self._beta = beta
+        self._beta_increment = beta_increment
+        self._epsilon = epsilon
+        
+        self._buffer = []
+        self._priorities = np.zeros(size, dtype=np.float32)
+        self._position = 0
+        self._total_transitions = 0
+
+    def push(self, transition):
+        s, a, r, s_, d = transition
+        transition = (s.cpu(), a, r, s_.cpu(), d)
+        
+        if len(self._buffer) < self._size:
+            self._buffer.append(None)
+        
+        self._buffer[self._position] = Transition(*transition)
+        
+        max_priority = self._priorities.max() if self._total_transitions > 0 else 1.0
+        self._priorities[self._position] = max_priority
+        
+        self._position = (self._position + 1) % self._size
+        self._total_transitions = min(self._total_transitions + 1, self._size)
+
+    def sample(self):
+        if self._total_transitions == 0:
+            raise RuntimeError("Cannot sample from empty buffer")
+        
+        probs = self._priorities[:self._total_transitions] ** self._alpha
+        probs /= probs.sum()
+        
+        indices = np.random.choice(
+            self._total_transitions, 
+            self._batch_size, 
+            p=probs,
+            replace=True
+        )
+        
+        samples = [self._buffer[idx] for idx in indices]
+        
+        weights = (self._total_transitions * probs[indices]) ** (-self._beta)
+        weights /= weights.max()  # Normalize weights
+        
+        self._beta = min(1.0, self._beta + self._beta_increment)
+        
+        states = torch.cat([s.state for s in samples], 0).to(self._device)
+        actions = torch.tensor([s.action for s in samples], dtype=torch.int64).unsqueeze(1).to(self._device)
+        rewards = torch.tensor([s.reward for s in samples], dtype=torch.float32).unsqueeze(1).to(self._device)
+        next_states = torch.cat([s.next_state for s in samples], 0).to(self._device)
+        dones = torch.tensor([s.done for s in samples], dtype=torch.uint8).unsqueeze(1).to(self._device)
+        weights = torch.tensor(weights, dtype=torch.float32).to(self._device)
+        
+        return states, actions, rewards, next_states, dones, indices, weights
+
+    def update_priorities(self, indices, td_errors):
+        for idx, error in zip(indices, td_errors):
+            self._priorities[idx] = abs(error) + self._epsilon
+
+    def __len__(self):
+        return self._total_transitions
+
+## ---------------------------------------------------------
 
 class HumanReplayMemory:
     def __init__(self, opt, size=1000, batch_size=32, human_records="_human"):

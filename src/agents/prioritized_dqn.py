@@ -1,8 +1,7 @@
 import torch
-
 from copy import deepcopy
 
-class DQNAgent:
+class PrioritizedDQNAgent:
     def __init__(
         self,
         env,
@@ -11,7 +10,7 @@ class DQNAgent:
         optimizer,
         epsilon_schedule,
         gamma=0.99,
-        update_steps= 2,
+        update_steps=2,
         update_target_steps=2000,
         warmup_steps=100,
     ):
@@ -44,7 +43,6 @@ class DQNAgent:
             return self.act(state)
 
         return self._env.get_action()
-        # return int(torch.randint(self._action_num, (1,)).item())
 
     def learn(
         self,
@@ -54,7 +52,6 @@ class DQNAgent:
         state_,
         done,
     ):
-        # add transition to the experience replay
         self._buffer.push((state.cpu(), action, reward, state_.cpu(), done))
 
         if self._step_cnt < self._warmup_steps:
@@ -62,13 +59,18 @@ class DQNAgent:
             return
 
         if self._step_cnt % self._update_steps == 0:
-            # sample a batch from experience replay
+            # sample a batch from experience replay with priorities
             batch = self._buffer.sample()
+            
+            # batch now includes importance sampling weights and indices
+            states, actions, rewards, states_, done, indices, weights = batch
 
             # perform an update
-            self._update(*batch)
+            td_errors = self._update(states, actions, rewards, states_, done, weights)
+            
+            # update priorities in the replay buffer
+            self._buffer.update_priorities(indices, abs(td_errors.detach().cpu().numpy()))
 
-        # update the target estimator
         if self._step_cnt % self._update_target_steps == 0:
             self._target_estimator.load_state_dict(self._estimator.state_dict())
 
@@ -81,10 +83,8 @@ class DQNAgent:
         rewards,
         states_,
         done,
+        weights
     ):
-        # compute the DeepQNetwork update. Carefull not to include the
-        # target network in the computational graph.
-
         # Compute Q(s, * | θ) and Q(s', . | θ^)
         q_values = self._estimator(states)
         with torch.no_grad():
@@ -97,12 +97,17 @@ class DQNAgent:
         # compute target Q(s', a')
         target_qsa = rewards + self._gamma * qsa_ * (1 - done.float())
 
-        # compute the loss and average it over the entire batch
-        loss = (qsa - target_qsa).pow(2).mean()
+        # compute TD errors for updating priorities
+        td_errors = qsa - target_qsa
+
+        # compute the weighted loss using importance sampling weights
+        loss = (weights * td_errors.pow(2)).mean()
 
         self._optimizer.zero_grad()
         loss.backward()
         self._optimizer.step()
+
+        return td_errors  # return TD errors for updating priorities
     
     def save(self, path: str):
         torch.save(self._estimator.state_dict(), path)

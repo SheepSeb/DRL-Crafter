@@ -14,6 +14,7 @@ class Env:
         assert mode in (
             "train",
             "eval",
+            "human" # for parsing the human buffer
         ), "`mode` argument can either be `train` or `eval`"
         self.device = args.device
 
@@ -57,7 +58,7 @@ class Env:
         obs, reward, done, info = self.env.step(action)
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device).div_(255)
         self.state_buffer.append(obs)
-        
+
         if (self.check_valid):
             reward += self._validate_action(action)
 

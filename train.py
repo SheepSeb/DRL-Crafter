@@ -11,6 +11,7 @@ from src.crafter_wrapper import Env
 
 from src.utils import ReplayMemory, get_epsilon_schedule
 from src.utils import HumanReplayMemory
+from src.utils import PrioritizedReplayMemory
 
 from src.networks.net import ConvModel
 from src.networks.duel_net import DuelNet
@@ -18,6 +19,9 @@ from src.networks.duel_net import DuelNet
 from src.agents.dqn import DQNAgent
 from src.agents.double_dqn import DoubleDQNAgent
 from src.agents.munchausen_dqn import MunchausenDoubleDQNAgent
+from src.agents.prioritized_double_dqn import PrioritizedDoubleDQNAgent
+from src.agents.prioritized_munchausen_dqn import PrioritizedMunchausenDoubleDQNAgent
+
 
 class RandomAgent:
     """An example Random Agent"""
@@ -98,13 +102,50 @@ def main(opt):
     else:
         print("Network: conv")
         net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
-
-    if ("human" in opt.agent):
+    
+    if ("prioritized" in opt.agent):
+        print("Buffer: prioritized")
+        buffer = PrioritizedReplayMemory(
+            device=opt.device,
+            size=5_000,
+            batch_size=32,
+            alpha=0.6,  # Higher alpha = more prioritization
+            beta=0.4,   # Start with low beta for more exploration
+            beta_increment=0.001  # Gradually increase beta
+        )
+    elif ("human" in opt.agent):
+        print("Buffer: with human replay")
         buffer = HumanReplayMemory(opt=opt, size=5_000, batch_size=32)
     else:
+        print("Buffer: normal")
         buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
 
-    if ("munchausen" in opt.agent):
+    ## TODO - add a method to save the parameter values of the agent
+    if ("prioritized_munchausen_double_dqn" in opt.agent):
+        print("Agent: Prioritized Munchausen")
+        agent = PrioritizedMunchausenDoubleDQNAgent(
+            env,
+            net,
+            buffer,
+            torch.optim.Adam(net.parameters(), lr=5e-4, eps=1e-5),
+            get_epsilon_schedule(start=0.5, end=0.1, steps=opt.steps * 0.5),
+            warmup_steps=opt.steps * 0.025,
+            update_steps=4,
+            update_target_steps=2_000,
+        )
+    elif ("prioritized_double_dqn" in opt.agent):
+        print("Agent: Prioritized DoubleDQN")
+        agent = PrioritizedDoubleDQNAgent(
+            env,
+            net,
+            buffer,
+            torch.optim.Adam(net.parameters(), lr=5e-4, eps=1e-5),
+            get_epsilon_schedule(start=1.0, end=0.1, steps=opt.steps * 0.5),
+            warmup_steps=opt.steps * 0.025,
+            update_steps=4,
+            update_target_steps=2_000,
+        )
+    elif ("munchausen" in opt.agent):
         print("Agent: MunchausenDoubleDQN")
         agent = MunchausenDoubleDQNAgent(
                 env,
@@ -129,7 +170,7 @@ def main(opt):
                 update_target_steps=2_000,
             )
     elif ("dqn" in opt.agent):
-        print("Agent DQN")
+        print("Agent: DQN")
         agent = DQNAgent(
                 env,
                 net,
@@ -168,7 +209,7 @@ def main(opt):
         obs = obs_next.clone()
 
         pbar.set_description(
-            f"[Episode {ep_cnt}] | Reward {episode_reward:.04f}"
+            f"Episode {ep_cnt} | Reward {episode_reward:.04f}"
         )
         pbar.update(1)
     
@@ -176,12 +217,6 @@ def main(opt):
 
 
 def get_options():
-    """ Configures a parser. Extend this with all the best performing hyperparameters of
-        your agent as defaults.
-
-        For devel purposes feel free to change the number of training steps and
-        the evaluation interval.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--logdir", default="logdir/check/1")
     parser.add_argument("--agent", default="double_dqn")

@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
 
-from src.agents.double_dqn import DoubleDQNAgent
+from src.agents.prioritized_dqn import PrioritizedDQNAgent
 
-class MunchausenDoubleDQNAgent(DoubleDQNAgent):
+class PrioritizedMunchausenDoubleDQNAgent(PrioritizedDQNAgent):
     def __init__(
         self,
         env,
@@ -16,8 +16,8 @@ class MunchausenDoubleDQNAgent(DoubleDQNAgent):
         update_target_steps=2000,
         warmup_steps=100,
         alpha=0.9,  # Munchausen scaling factor
-        tau=0.03,   # temperature parameter for softmax
-        lo=-1,      # lower bound for log-policy
+        tau=0.03,   # Temperature parameter for softmax
+        lo=-1,      # Lower bound for log-policy
     ):
         super().__init__(
             env=env,
@@ -35,6 +35,7 @@ class MunchausenDoubleDQNAgent(DoubleDQNAgent):
         self._lo = lo
 
     def _compute_log_policy(self, q_values):
+        """Compute the log policy using softmax with temperature tau."""
         return torch.log_softmax(q_values / self._tau, dim=1)
 
     def _update(
@@ -44,22 +45,23 @@ class MunchausenDoubleDQNAgent(DoubleDQNAgent):
         rewards,
         states_,
         done,
+        weights
     ):
+        # Compute Q-values for current and next states
         q_values = self._estimator(states)
         
         with torch.no_grad():
             next_actions = self._estimator(states_).argmax(1, keepdim=True)
             next_q_values = self._target_estimator(states_)
             
-            # log-policy for current and next states
             log_pi = self._compute_log_policy(q_values)
             next_log_pi = self._compute_log_policy(next_q_values)
             
             log_pi = torch.clamp(log_pi, min=self._lo)
             next_log_pi = torch.clamp(next_log_pi, min=self._lo)
             
-            # Munchausen term for current reward
-            munchausen_term = self._alpha * self._tau * log_pi.gather(1, actions)            
+            munchausen_term = self._alpha * self._tau * log_pi.gather(1, actions)
+            
             modified_rewards = rewards + munchausen_term
             
             next_q = next_q_values.gather(1, next_actions)
@@ -70,8 +72,12 @@ class MunchausenDoubleDQNAgent(DoubleDQNAgent):
         
         qsa = q_values.gather(1, actions)
         
-        loss = (qsa - target_qsa).pow(2).mean()
-        
+        td_errors = qsa - target_qsa
+
+        loss = (weights * td_errors.pow(2)).mean()
+
         self._optimizer.zero_grad()
         loss.backward()
         self._optimizer.step()
+
+        return td_errors  # return TD errors for updating priorities
