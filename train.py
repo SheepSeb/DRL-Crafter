@@ -10,6 +10,40 @@ from src.agents.random_agent import RandomAgent
 from src.agents.reinforce_agent import Reinforce, Policy
 from src.agents.actor_critic_agent import A2C, ActorCriticPolicy
 from src.agents.ppo_attention import PPOAttentionAgent
+from torch import nn
+
+from tqdm import tqdm
+
+from src.crafter_wrapper import Env
+
+from src.utils import ReplayMemory, get_epsilon_schedule
+from src.utils import HumanReplayMemory
+from src.utils import PrioritizedReplayMemory
+
+from src.networks.net import ConvModel
+from src.networks.duel_net import DuelNet
+
+from src.agents.dqn import DQNAgent
+from src.agents.double_dqn import DoubleDQNAgent
+from src.agents.munchausen_dqn import MunchausenDoubleDQNAgent
+from src.agents.prioritized_double_dqn import PrioritizedDoubleDQNAgent
+from src.agents.prioritized_munchausen_dqn import PrioritizedMunchausenDoubleDQNAgent
+
+
+class RandomAgent:
+    """An example Random Agent"""
+
+    def __init__(self, action_num) -> None:
+        self.action_num = action_num
+        # a uniformly random policy
+        self.policy = torch.distributions.Categorical(
+            torch.ones(action_num) / action_num
+        )
+
+    def act(self, observation):
+        """ Since this is a random agent the observation is not used."""
+        return self.policy.sample().item()
+
 
 def _save_stats(episodic_returns, crt_step, path):
     # save the evaluation stats
@@ -31,7 +65,8 @@ def eval(agent, env, crt_step, opt):
     episodic_returns = []
     for _ in range(opt.eval_episodes):
         obs, done = env.reset(), False
-        episodic_returns.append(0)
+        episodic_returns.append(0.0)
+
         while not done:
             action = agent.act(obs, eval=True)
             obs, reward, done, info = env.step(action)
@@ -59,76 +94,147 @@ def _info(opt):
 
 def main(opt):
     _info(opt)
+    
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # opt.device = torch.device("cpu")
+    
     env = Env("train", opt)
     eval_env = Env("eval", opt)
+    
+    # agent = RandomAgent(env.action_space.n)
 
-    if opt.agent_type == "random":
-        agent = RandomAgent(env.action_space.n)
-    elif opt.agent_type == "reinforce":
-        policy = Policy(84 * 84 * opt.history_length, env.action_space.n)
-        agent = Reinforce(policy, 0.99, torch.optim.Adam(policy.parameters(), lr=1e-2))
-        policy.to(opt.device)
-    elif opt.agent_type == "a2c":
-        policy = ActorCriticPolicy(84 * 84 * opt.history_length, env.action_space.n)
-        agent = A2C(policy, 0.99, torch.optim.Adam(policy.parameters(), lr=5e-3, eps=1e-05), nsteps=20)
-        policy.to(opt.device)
-    elif opt.agent_type == "ppo_attention":
-        agent = PPOAttentionAgent(
-            obs_shape=(opt.history_length, 84, 84),
-            action_dim=env.action_space.n,
-            device=opt.device,
-            attention_dim=256,  # You can adjust these hyperparameters
-            num_heads=4
-        )
+    if ("duel" in opt.agent):
+        print("Network: duel")
+        net = DuelNet(opt.history_length, env.action_space.n).to(opt.device)
     else:
-        raise ValueError(f"Unknown agent type: {opt.agent_type}")
+        print("Network: conv")
+        net = ConvModel(opt.history_length, env.action_space.n).to(opt.device)
+    
+    if ("prioritized" in opt.agent):
+        print("Buffer: prioritized")
+        buffer = PrioritizedReplayMemory(
+            device=opt.device,
+            size=5_000,
+            batch_size=32,
+            alpha=0.6,  # Higher alpha = more prioritization
+            beta=0.4,   # Start with low beta for more exploration
+            beta_increment=0.001  # Gradually increase beta
+        )
+    elif ("human" in opt.agent):
+        print("Buffer: with human replay")
+        buffer = HumanReplayMemory(opt=opt, size=5_000, batch_size=32)
+    else:
+        print("Buffer: normal")
+        buffer = ReplayMemory(device=opt.device, size=5_000, batch_size=32)
+
+    ## TODO - add a method to save the parameter values of the agent
+    if ("prioritized_munchausen_double_dqn" in opt.agent):
+        print("Agent: Prioritized Munchausen")
+        agent = PrioritizedMunchausenDoubleDQNAgent(
+            env,
+            net,
+            buffer,
+            torch.optim.Adam(net.parameters(), lr=5e-4, eps=1e-5),
+            get_epsilon_schedule(start=0.5, end=0.1, steps=opt.steps * 0.5),
+            warmup_steps=opt.steps * 0.025,
+            update_steps=4,
+            update_target_steps=2_000,
+        )
+    elif ("prioritized_double_dqn" in opt.agent):
+        print("Agent: Prioritized DoubleDQN")
+        agent = PrioritizedDoubleDQNAgent(
+            env,
+            net,
+            buffer,
+            torch.optim.Adam(net.parameters(), lr=5e-4, eps=1e-5),
+            get_epsilon_schedule(start=1.0, end=0.1, steps=opt.steps * 0.5),
+            warmup_steps=opt.steps * 0.025,
+            update_steps=4,
+            update_target_steps=2_000,
+        )
+    elif ("munchausen" in opt.agent):
+        print("Agent: MunchausenDoubleDQN")
+        agent = MunchausenDoubleDQNAgent(
+                env,
+                net,
+                buffer,
+                torch.optim.Adam(net.parameters(), lr=4e-4, eps=1e-5),
+                get_epsilon_schedule(start=0.4, end=0.01, steps=opt.steps * 0.5),
+                warmup_steps=opt.steps * 0.025,
+                update_steps=4,
+                update_target_steps=2_000,
+            )
+    elif ("double_dqn" in opt.agent):
+        print("Agent: DoubleDQN")
+        agent = DoubleDQNAgent(
+                env,
+                net,
+                buffer,
+                torch.optim.Adam(net.parameters(), lr=3e-4, eps=1e-5),
+                get_epsilon_schedule(start=1.0, end=0.1, steps=opt.steps * 0.5),
+                warmup_steps=opt.steps * 0.025,
+                update_steps=4,
+                update_target_steps=2_000,
+            )
+    elif ("dqn" in opt.agent):
+        print("Agent: DQN")
+        agent = DQNAgent(
+                env,
+                net,
+                buffer,
+                torch.optim.Adam(net.parameters(), lr=3e-4, eps=1e-5),
+                get_epsilon_schedule(start=1.0, end=0.1, steps=opt.steps * 0.5),
+                warmup_steps=opt.steps * 0.025,
+                update_steps=4,
+                update_target_steps=2_000,
+            )
+
+    agent.train()
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
-    pbar = tqdm(total=opt.steps, desc="Training")
-
+    pbar = tqdm(total=opt.steps, position=0, leave=True)
     while step_cnt < opt.steps or not done:
         if done:
             ep_cnt += 1
             obs, done = env.reset(), False
+            episode_reward = 0
 
-        action = agent.act(obs)
+        action = agent.step(obs)
         obs_next, reward, done, info = env.step(action)
-        
         agent.learn(obs, action, reward, obs_next, done)
 
         step_cnt += 1
 
         # evaluate once in a while
         if step_cnt % opt.eval_interval == 0:
+            agent.eval()
             eval(agent, eval_env, step_cnt, opt)
-            # Save agent
-            torch.save(agent, opt.logdir + f"/agent{step_cnt}.pt")
+            agent.train()
         
-        obs = obs_next
+        episode_reward += reward
+        obs = obs_next.clone()
 
+        pbar.set_description(
+            f"Episode {ep_cnt} | Reward {episode_reward:.04f}"
+        )
         pbar.update(1)
-        pbar.set_postfix({"episode": ep_cnt, "reward": reward})
+    
+    agent.save(opt.logdir + "/agent.pkl")
     
     pbar.close()
 
 def get_options():
-    """ Configures a parser. Extend this with all the best performing hyperparameters of
-        your agent as defaults.
-
-        For devel purposes feel free to change the number of training steps and
-        the evaluation interval.
-    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent_type", type=str, default="ppo_attention", choices=["random", "reinforce","a2c","ppo_attention", 'hier'], help="Type of agent to use.")
-    parser.add_argument("--logdir", default="logdir/x/0")
+    parser.add_argument("--logdir", default="logdir/check/1")
+    parser.add_argument("--agent", default="double_dqn")
+    
     parser.add_argument(
         "--steps",
         type=int,
         metavar="STEPS",
-        default=1_000_000,
+        # default=1_000_000,
+        default=250_000,
         help="Total number of training steps.",
     )
     parser.add_argument(
@@ -141,7 +247,7 @@ def get_options():
     parser.add_argument(
         "--eval-interval",
         type=int,
-        default=10,
+        default=25_000,
         metavar="STEPS",
         help="Number of training steps between evaluations",
     )
