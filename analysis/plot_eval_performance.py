@@ -38,6 +38,9 @@ def read_crafter_logs(indir, _filename, clip=True):
     # plot
     df = pd.concat(runs, ignore_index=True)
     sns.lineplot(x="step", y="avg_return", data=df)
+    plt.xlabel("Step")
+    plt.ylabel("Average Reward")
+    plt.title("A2C")
     plt.savefig(f"{_filename}.png")
     plt.show()
 
