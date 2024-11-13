@@ -160,8 +160,6 @@ def plot_counts_eps(filepath, name_run):
     log_list = log_list[log_list['length'] <= 1e6]
 
 if __name__ == "__main__":
-    # filespaths = ['logdir/a2c_new/', 'logdir/ppo_attention_new/', 'logdir/reinforce/']
-
     compare_with_random('logdir/a2c-100k/', 'a2c-100k')
     compare_with_random('logdir/ppo_attention-100k/', 'ppo_attention-100k')
     compare_with_random('logdir/reinforce-100k/', 'reinforce-100k')
