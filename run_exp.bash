@@ -1,16 +1,5 @@
 #!/bin/bash
 
-# Define the log directory and training script
-LOGDIR="./logdir"
-TRAIN_SCRIPT="./train_script.sh"
-PARAMS="$@"
-
-# Clean the log directory
-if [ -d "$LOGDIR" ]; then
-    rm -rf "$LOGDIR"/*
-else
-    mkdir -p "$LOGDIR"
-fi
-
-# Run the training script with the provided parameters
-bash "$TRAIN_SCRIPT" $PARAMS
+for i in $(seq 3); do python train.py --logdir logdir/reinforce/$i --steps 100_000 --eval-interval 10_000 --agent_type reinforce & done
+for i in $(seq 3); do python train.py --logdir logdir/a2c/$i --steps 100_000 --eval-interval 10_000 --agent_type a2c & done
+for i in $(seq 3); do python train.py --logdir logdir/ppo/$i --agent_type ppo_attention & done

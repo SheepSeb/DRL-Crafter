@@ -4,10 +4,14 @@ from pathlib import Path
 
 import torch
 from torch import nn
-
 from tqdm import tqdm
 
 from src.crafter_wrapper import Env
+
+from src.agents.random_agent import RandomAgent
+from src.agents.reinforce_agent import Reinforce, Policy
+from src.agents.actor_critic_agent import A2C, ActorCriticPolicy
+from src.agents.ppo_attention import PPOAttentionAgent
 
 from src.utils import ReplayMemory, get_epsilon_schedule
 from src.utils import HumanReplayMemory
@@ -61,7 +65,7 @@ def eval(agent, env, crt_step, opt):
         episodic_returns.append(0.0)
 
         while not done:
-            action = agent.act(obs)
+            action = agent.act(obs, eval=True)
             obs, reward, done, info = env.step(action)
             episodic_returns[-1] += reward
 
@@ -93,8 +97,6 @@ def main(opt):
     
     env = Env("train", opt)
     eval_env = Env("eval", opt)
-    
-    # agent = RandomAgent(env.action_space.n)
 
     if ("duel" in opt.agent):
         print("Network: duel")
@@ -181,8 +183,39 @@ def main(opt):
                 update_steps=4,
                 update_target_steps=2_000,
             )
-
-    agent.train()
+    elif ("reinforce" in opt.agent):
+        print("Agent: Reinforce")
+        reinforce_policy = Policy(84 * 84 * opt.history_length, env.action_space.n)
+        agent = Reinforce(
+            policy=reinforce_policy,
+            optimizer=torch.optim.Adam(reinforce_policy.parameters(), lr=1e-2),
+            gamma=0.99,
+        )
+        agent.policy.to(opt.device)
+    elif ("a2c" in opt.agent):
+        print("Agent: A2C")
+        actor_critic_policy = ActorCriticPolicy(84 * 84 * opt.history_length, env.action_space.n)
+        agent = A2C(
+            policy=actor_critic_policy,
+            optimizer=torch.optim.Adam(actor_critic_policy.parameters(), lr=1e-2),
+            gamma=0.99,
+            nsteps=20,
+        )
+        agent.policy.to(opt.device)
+    elif ("ppo_attention" in opt.agent):
+        agent = PPOAttentionAgent(
+            obs_shape=(opt.history_length, 84, 84),
+            action_dim=env.action_space.n,
+            device=opt.device,
+            attention_dim=256,  # You can adjust these hyperparameters
+            num_heads=4
+        )
+    else:
+        raise ValueError(f"Unknown agent: {opt.agent}")
+    
+    # Check if the agent has a train method
+    if hasattr(agent, "train"):
+        agent.train()
 
     # main loop
     ep_cnt, step_cnt, done = 0, 0, True
@@ -193,7 +226,11 @@ def main(opt):
             obs, done = env.reset(), False
             episode_reward = 0
 
-        action = agent.step(obs)
+        if hasattr(agent, "act"):
+            action = agent.act(obs)
+        else:
+            action = agent.step(obs)
+        
         obs_next, reward, done, info = env.step(action)
         agent.learn(obs, action, reward, obs_next, done)
 
@@ -201,9 +238,12 @@ def main(opt):
 
         # evaluate once in a while
         if step_cnt % opt.eval_interval == 0:
-            agent.eval()
-            eval(agent, eval_env, step_cnt, opt)
-            agent.train()
+            if hasattr(agent, "eval"):
+                agent.eval()
+                eval(agent, eval_env, step_cnt, opt)
+                agent.train()
+            else:
+                eval(agent, eval_env, step_cnt, opt)
         
         episode_reward += reward
         obs = obs_next.clone()
@@ -214,19 +254,19 @@ def main(opt):
         pbar.update(1)
     
     agent.save(opt.logdir + "/agent.pkl")
-
+    
+    pbar.close()
 
 def get_options():
     parser = argparse.ArgumentParser()
     parser.add_argument("--logdir", default="logdir/check/1")
-    parser.add_argument("--agent", default="double_dqn")
+    parser.add_argument("--agent", default="munchausen_double_dqn")
     
     parser.add_argument(
         "--steps",
         type=int,
         metavar="STEPS",
-        # default=1_000_000,
-        default=250_000,
+        default=1_000_000,
         help="Total number of training steps.",
     )
     parser.add_argument(
@@ -239,7 +279,7 @@ def get_options():
     parser.add_argument(
         "--eval-interval",
         type=int,
-        default=25_000,
+        default=100_000,
         metavar="STEPS",
         help="Number of training steps between evaluations",
     )

@@ -18,7 +18,7 @@ def read_pkl(path):
     return events
 
 
-def read_crafter_logs(indir, clip=True):
+def read_crafter_logs(indir, _filename, clip=True):
     indir = pathlib.Path(indir)
     # read the pickles
     filenames = sorted(list(indir.glob("**/*/eval_stats.pkl")))
@@ -38,7 +38,10 @@ def read_crafter_logs(indir, clip=True):
     # plot
     df = pd.concat(runs, ignore_index=True)
     sns.lineplot(x="step", y="avg_return", data=df)
-    plt.savefig("demo_plot.png")
+    plt.xlabel("Step")
+    plt.ylabel("Average Reward")
+    plt.title("A2C")
+    plt.savefig(f"{_filename}.png")
     plt.show()
 
 
@@ -49,6 +52,11 @@ if __name__ == "__main__":
         default="logdir/random_agent",
         help="Path to the folder containing different runs.",
     )
+    parser.add_argument(
+        "--filename",
+        default="demo_plot",
+        help="Name of the output file.",
+    )
     cfg = parser.parse_args()
 
-    read_crafter_logs(cfg.logdir)
+    read_crafter_logs(cfg.logdir, cfg.filename)
